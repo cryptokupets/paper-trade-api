@@ -114,22 +114,6 @@ export class PaperTradeController extends ODataController {
     return paperTrade;
   }
 
-  @odata.PATCH
-  public async patch(
-    @odata.key key: string,
-    @odata.body delta: any
-  ): Promise<number> {
-    if (delta._id) {
-      delete delta._id;
-    }
-    // tslint:disable-next-line: variable-name
-    const _id = new ObjectID(key);
-    return (await connect())
-      .collection(collectionName)
-      .updateOne({ _id }, { $set: delta })
-      .then(result => result.modifiedCount);
-  }
-
   @odata.DELETE
   public async remove(@odata.key key: string): Promise<number> {
     // tslint:disable-next-line: variable-name
