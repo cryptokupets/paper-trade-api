@@ -1,6 +1,9 @@
+import es from "event-stream";
+import moment from "moment";
 import { ObjectID } from "mongodb";
 import { createQuery } from "odata-v4-mongodb";
 import { Edm, odata, ODataController, ODataQuery } from "odata-v4-server";
+import { streamTrades } from "paper-trade";
 import connect from "../connect";
 import { PaperTrade } from "../models/PaperTrade";
 import { Trade } from "../models/Trade";
@@ -61,27 +64,54 @@ export class PaperTradeController extends ODataController {
     @odata.body
     body: any
   ): Promise<PaperTrade> {
-    const backtest = new PaperTrade(body);
-    backtest._id = (await (await connect())
-      .collection(collectionName)
-      .insertOne(backtest)).insertedId;
-    return backtest;
-  }
+    const paperTrade = new PaperTrade(body);
+    const db = await connect();
+    const collection = await db.collection(collectionName);
+    paperTrade._id = (await collection.insertOne(paperTrade)).insertedId;
 
-  @odata.PATCH
-  public async patch(
-    @odata.key key: string,
-    @odata.body delta: any
-  ): Promise<number> {
-    if (delta._id) {
-      delete delta._id;
-    }
-    // tslint:disable-next-line: variable-name
-    const _id = new ObjectID(key);
-    return (await connect())
-      .collection(collectionName)
-      .updateOne({ _id }, { $set: delta })
-      .then(result => result.modifiedCount);
+    const {
+      _id,
+      asset,
+      currency,
+      exchange,
+      period,
+      indicators,
+      code,
+      initialBalance
+    } = paperTrade;
+
+    PaperTrade.stream = streamTrades({
+      exchange,
+      currency,
+      asset,
+      period: "" + period,
+      start: moment()
+        .utc()
+        .toISOString(),
+      indicators: JSON.parse(indicators),
+      code,
+      initialBalance
+    });
+
+    PaperTrade.stream.pipe(
+      es.map(async (chunk: any, next: any) => {
+        const doc: { amount: number; parentId?: ObjectID } = JSON.parse(chunk);
+        doc.parentId = _id;
+        const tradesCollection = await db.collection("trade"); // UNDONE можно ли подсократить?
+        await tradesCollection.insertOne(doc, next);
+        await collection.updateOne(
+          { _id },
+          {
+            $set: {
+              finalBalance: Math.abs(doc.amount)
+            }
+          }
+        );
+        console.log(doc);
+      })
+    );
+
+    return paperTrade;
   }
 
   @odata.DELETE

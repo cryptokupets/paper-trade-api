@@ -1,14 +1,11 @@
-import es from "event-stream";
-import moment from "moment";
 import { ObjectID } from "mongodb";
 import { Edm, odata } from "odata-v4-server";
-import { streamTrades } from "paper-trade";
-import connect from "../connect";
+import { Readable } from "stream";
 import { Trade } from "./Trade";
 
-const collectionName = "paperTrade";
-
 export class PaperTrade {
+  public static stream: Readable;
+
   @Edm.Key
   @Edm.Computed
   @Edm.String
@@ -56,62 +53,9 @@ export class PaperTrade {
   }
 
   @Edm.Action
-  public async execute(@odata.result result: any): Promise<number> { // FIXME должна обрываться после успешного запуска?
-    const { _id: key } = result;
-    // tslint:disable-next-line: variable-name
-    const _id = new ObjectID(key);
-    const db = await connect();
-    const paperTrade = new PaperTrade(
-      await db.collection(collectionName).findOne({ _id })
-    );
-    const {
-      asset,
-      currency,
-      exchange,
-      period,
-      indicators,
-      code,
-      initialBalance
-    } = paperTrade;
-
-    const rs = streamTrades({
-      exchange,
-      currency,
-      asset,
-      period: "" + period,
-      start: moment().utc().toISOString(),
-      indicators: JSON.parse(indicators),
-      code,
-      initialBalance
-    });
-
-    let finalBalance: number;
-    const tradesCollection = await db.collection("trade");
-    await tradesCollection.deleteMany({ parentId: _id });
-
-    rs.pipe(
-      es.map((chunk: any, next: any) => {
-        const doc: { amount: number; parentId?: ObjectID } = JSON.parse(chunk);
-        doc.parentId = _id;
-        finalBalance = doc.amount;
-        tradesCollection.insertOne(doc, next);
-      })
-    );
-
-    await new Promise(resolve => {
-      rs.on("end", resolve);
-    });
-
-    return db
-      .collection(collectionName)
-      .updateOne(
-        { _id },
-        {
-          $set: {
-            finalBalance: Math.abs(finalBalance)
-          }
-        }
-      )
-      .then(r => r.modifiedCount);
+  public stop(@odata.result result: any) { // UNDONE можно использовать несколько стримов одновременно
+    if (PaperTrade.stream) {
+      PaperTrade.stream.destroy();
+    }
   }
 }
